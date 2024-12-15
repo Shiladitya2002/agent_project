@@ -660,7 +660,7 @@ def generate_interpret(
     else:
         model_kwargs["use_cache"] = generation_config.use_cache
 
-    accepts_attention_mask = "attention_mask" in set(inspect.signature(model.forward).parameters.keys())
+    accepts_attention_mask = "attention_mask" in set(inspect.signature(model.my_model_model_forward_interpret).parameters.keys())
     requires_attention_mask = "encoder_outputs" not in model_kwargs
 
     if model_kwargs.get("attention_mask", None) is None and requires_attention_mask and accepts_attention_mask:

@@ -1,4 +1,5 @@
-from selfie.generate_wrappers import generate_interpret, model_forward_interpret
+from selfie_for_transformers_4_46_3.generate_wrappers import generate_interpret, model_forward_interpret, \
+    my_generate_interpret
 from tqdm import tqdm
 import torch
 import pandas as pd
@@ -8,22 +9,18 @@ import numpy as np
 class InterpretationPrompt:
     def __init__(self, tokenizer, interpretation_prompt_sequence):
         self.tokenizer = tokenizer
-
         self.interpretation_prompt = ""
         self.insert_locations = []
 
         for part in interpretation_prompt_sequence:
-            if type(part) == str:
+            if isinstance(part, str):
                 self.interpretation_prompt += part
             else:
                 insert_start = len(self.tokenizer.encode(self.interpretation_prompt))
                 self.interpretation_prompt += "_ "
-                insert_end = len(self.tokenizer.encode(self.interpretation_prompt))
+                self.insert_locations.append(insert_start)
 
-                for insert_idx in range(insert_start, insert_end):
-                    self.insert_locations.append(insert_idx)
-
-        self.interpretation_prompt_model_inputs = self.tokenizer(self.interpretation_prompt, return_tensors="pt")
+        self.tokenized_interpretation_prompt = self.tokenizer(self.interpretation_prompt, return_tensors="pt")
 
 
 def interpret(original_prompt=None,
@@ -33,15 +30,14 @@ def interpret(original_prompt=None,
               tokens_to_interpret=None,
               bs=8,
               max_new_tokens=30,
-              k=1) -> pd.DataFrame:
-
+              k=1) -> dict[str, list]:
     print(f"Interpreting '{original_prompt}' with '{interpretation_prompt.interpretation_prompt}'")
-    interpretation_prompt_model_inputs = interpretation_prompt.interpretation_prompt_model_inputs
-    insert_locations = interpretation_prompt.insert_locations
+    tokenized_interpretation_prompt = interpretation_prompt.tokenized_interpretation_prompt
+    tokenized_interpretation_prompt = tokenized_interpretation_prompt.to(model.device)
+    # insert_locations = interpretation_prompt.insert_locations
     original_prompt_inputs = tokenizer(original_prompt, return_tensors="pt").to(model.device)
-    interpretation_prompt_model_inputs = interpretation_prompt_model_inputs.to(model.device)
 
-    interpretation_df = {
+    interpretation_dict = {
         'prompt': [],
         'interpretation': [],
         'layer': [],
@@ -49,7 +45,7 @@ def interpret(original_prompt=None,
         'token_decoded': [],
     }
 
-    prompt_len = original_prompt_inputs['input_ids'].shape[-1]
+    # prompt_len = original_prompt_inputs['input_ids'].shape[-1]
     outputs = model_forward_interpret(model,
                                       **original_prompt_inputs,
                                       return_dict=True,
@@ -75,37 +71,41 @@ def interpret(original_prompt=None,
 
     for batch_start_idx in tqdm(range(0, len(all_insert_infos), bs)):
         with torch.no_grad():
-            batch_insert_infos = all_insert_infos[batch_start_idx:min(batch_start_idx + bs, len(all_insert_infos))]
+            batch_insert_infos = all_insert_infos[batch_start_idx: min(batch_start_idx + bs, len(all_insert_infos))]
 
-            repeat_prompt_n_tokens = interpretation_prompt_model_inputs['input_ids'].shape[-1]
+            repeat_prompt_n_tokens = tokenized_interpretation_prompt['input_ids'].shape[-1]
 
             batched_interpretation_prompt_model_inputs = tokenizer(
                 [interpretation_prompt.interpretation_prompt] * len(batch_insert_infos), return_tensors="pt")
-            output = generate_interpret(**batched_interpretation_prompt_model_inputs, model=model,
+
+            # Move tensors to the same device as the model
+            for key in batched_interpretation_prompt_model_inputs:
+                batched_interpretation_prompt_model_inputs[key] = batched_interpretation_prompt_model_inputs[key].to(
+                    model.device)
+
+            output = my_generate_interpret(**batched_interpretation_prompt_model_inputs, model=model,
                                         max_new_tokens=max_new_tokens, insert_info=batch_insert_infos,
                                         pad_token_id=tokenizer.eos_token_id, output_attentions=False)
 
-            cropped_interpretation_tokens = output[:, repeat_prompt_n_tokens:]
-            cropped_interpretation = tokenizer.batch_decode(cropped_interpretation_tokens, skip_special_tokens=True)
+            generated_output = output[:, repeat_prompt_n_tokens:]
+            cropped_interpretation = tokenizer.batch_decode(generated_output, skip_special_tokens=True)
 
             for i in range(len(batch_insert_infos)):
-                interpretation_df['prompt'].append(original_prompt)
-                interpretation_df['interpretation'].append(cropped_interpretation[i])
-                interpretation_df['layer'].append(batch_insert_infos[i]['retrieve_layer'])
-                interpretation_df['token'].append(batch_insert_infos[i]['retrieve_token'])
-                interpretation_df['token_decoded'].append(
+                interpretation_dict['prompt'].append(original_prompt)
+                interpretation_dict['interpretation'].append(cropped_interpretation[i])
+                interpretation_dict['layer'].append(batch_insert_infos[i]['retrieve_layer'])
+                interpretation_dict['token'].append(batch_insert_infos[i]['retrieve_token'])
+                interpretation_dict['token_decoded'].append(
                     tokenizer.decode(original_prompt_inputs.input_ids[0, batch_insert_infos[i]['retrieve_token']]))
-    return interpretation_df
+    return interpretation_dict
 
 
 def interpret_vectors(vecs=None, model=None, interpretation_prompt=None, tokenizer=None, bs=8, k=2, max_new_tokens=30):
-    interpretation_prompt_model_inputs = interpretation_prompt.interpretation_prompt_model_inputs
+    tokenized_interpretation_prompt = interpretation_prompt.tokenized_interpretation_prompt
+    tokenized_interpretation_prompt = tokenized_interpretation_prompt.to(model.device)
     insert_locations = interpretation_prompt.insert_locations
-    interpretation_prompt_model_inputs = interpretation_prompt_model_inputs.to(model.device)
 
     all_interpretations = []
-
-    batch_insert_infos = []
 
     batch_insert_infos = []
 
@@ -125,8 +125,8 @@ def interpret_vectors(vecs=None, model=None, interpretation_prompt=None, tokeniz
             batched_interpretation_prompt_model_inputs = tokenizer(
                 [interpretation_prompt.interpretation_prompt] * len(batch_insert_infos), return_tensors="pt").to(
                 'cuda:0')
-            repeat_prompt_n_tokens = interpretation_prompt_model_inputs['input_ids'].shape[-1]
-            output = generate_interpret(**batched_interpretation_prompt_model_inputs, model=model,
+            repeat_prompt_n_tokens = tokenized_interpretation_prompt['input_ids'].shape[-1]
+            output = my_generate_interpret(**batched_interpretation_prompt_model_inputs, model=model,
                                         max_new_tokens=max_new_tokens, insert_info=batch_insert_infos,
                                         pad_token_id=tokenizer.eos_token_id, output_attentions=False)
 

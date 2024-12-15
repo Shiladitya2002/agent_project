@@ -31,7 +31,6 @@ from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
 from transformers.generation import GenerationMixin
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
-from transformers.modeling_flash_attention_utils import FlashAttentionKwargs, _flash_attention_forward
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
@@ -40,7 +39,8 @@ from transformers.modeling_outputs import (
     TokenClassifierOutput,
 )
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
-from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast, SequenceClassifierOutputWithPast
+from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast, \
+    SequenceClassifierOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from transformers.processing_utils import Unpack
 from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
@@ -52,7 +52,6 @@ from transformers.utils import (
     replace_return_docstrings,
 )
 from transformers.models.llama.configuration_llama import LlamaConfig
-
 
 logger = logging.get_logger(__name__)
 
@@ -129,19 +128,22 @@ LLAMA_INPUTS_DOCSTRING = r"""
 @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
 @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
 def model_forward_interpret(
-    model = None,
-    input_ids: torch.LongTensor = None,
-    attention_mask: Optional[torch.Tensor] = None,
-    position_ids: Optional[torch.LongTensor] = None,
-    past_key_values: Optional[List[torch.FloatTensor]] = None,
-    inputs_embeds: Optional[torch.FloatTensor] = None,
-    labels: Optional[torch.LongTensor] = None,
-    use_cache: Optional[bool] = None,
-    output_attentions: Optional[bool] = None,
-    output_hidden_states: Optional[bool] = None,
-    return_dict: Optional[bool] = None,
-    insert_info = None,
-    output_pre_mlp_states = False,
+        model,
+        input_ids: torch.LongTensor = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        num_logits_to_keep: int = 0,
+        insert_info=None,
+        output_pre_mlp_states=False,
+        **kwargs,
 ) -> Union[Tuple, CausalLMOutputWithPast]:
     r"""
     Args:
@@ -176,10 +178,9 @@ def model_forward_interpret(
     return_dict = return_dict if return_dict is not None else model.config.use_return_dict
 
     # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
-    # print('input_ids', input_ids.shape)
 
-    outputs, all_original_hidden_states = model_model_forward_interpret(
-        model=model,
+    outputs, all_original_hidden_states = my_model_model_forward_interpret(
+        model=model.model,   # TODO: important!
         input_ids=input_ids,
         attention_mask=attention_mask,
         position_ids=position_ids,
@@ -189,7 +190,7 @@ def model_forward_interpret(
         output_attentions=output_attentions,
         output_hidden_states=output_hidden_states,
         return_dict=return_dict,
-        insert_info = insert_info,
+        insert_info=insert_info,
     )
 
     hidden_states = outputs[0]
@@ -200,53 +201,23 @@ def model_forward_interpret(
     else:
         logits = model.lm_head(hidden_states)
     logits = logits.float()
-    # print('logits', logits.shape)
-    # print('outputs', hidden_states.shape)
 
     loss = None
     if labels is not None:
-        # Shift so that tokens < n predict n
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        # Flatten the tokens
-        loss_fct = CrossEntropyLoss()
-        shift_logits = shift_logits.view(-1, model.config.vocab_size)
-        shift_labels = shift_labels.view(-1)
-        # Enable model parallelism
-        shift_labels = shift_labels.to(shift_logits.device)
-        loss = loss_fct(shift_logits, shift_labels)
+        loss = model.loss_function(logits=logits, labels=labels, vocab_size=model.config.vocab_size, **kwargs)
 
     if not return_dict:
         output = (logits,) + outputs[1:]
         return (loss,) + output if loss is not None else output
-    
+
     if output_pre_mlp_states:
-        if output_attentions:
-            return CausalLMOutputWithPast(
-                loss=loss,
-                logits=logits,
-                past_key_values=outputs.past_key_values,
-                hidden_states=outputs.hidden_states,
-                attentions=outputs.attentions,
-                # other={'all_original_hidden_states': all_original_hidden_states}
-            ), all_original_hidden_states
-        else:
-            return CausalLMOutputWithPast(
-                loss=loss,
-                logits=logits,
-                past_key_values=outputs.past_key_values,
-                hidden_states=outputs.hidden_states,
-                attentions=outputs.attentions,
-            ), all_original_hidden_states
-    if output_attentions:
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
-            # other={'all_original_hidden_states': all_original_hidden_states}
-        )
+        ), all_original_hidden_states
     else:
         return CausalLMOutputWithPast(
             loss=loss,
@@ -255,20 +226,171 @@ def model_forward_interpret(
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-    
+
+
+# from transformers==4.46.3
+@add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
+def my_model_model_forward_interpret(
+        model,
+        input_ids: torch.LongTensor = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        insert_info=None,
+        **flash_attn_kwargs,
+) -> Union[Tuple, BaseModelOutputWithPast]:
+    output_attentions = output_attentions if output_attentions is not None else model.config.output_attentions
+    output_hidden_states = (
+        output_hidden_states if output_hidden_states is not None else model.config.output_hidden_states
+    )
+    use_cache = use_cache if use_cache is not None else model.config.use_cache
+    return_dict = return_dict if return_dict is not None else model.config.use_return_dict
+
+    if (input_ids is None) ^ (inputs_embeds is not None):
+        raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+
+    if model.gradient_checkpointing and model.training and use_cache:
+        logger.warning_once(
+            "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`."
+        )
+        use_cache = False
+
+    if inputs_embeds is None:
+        inputs_embeds = model.embed_tokens(input_ids)
+
+    # kept for BC (non `Cache` `past_key_values` inputs)
+    return_legacy_cache = False
+    if use_cache and not isinstance(past_key_values, Cache):
+        return_legacy_cache = True
+        if past_key_values is None:
+            past_key_values = DynamicCache()
+        else:
+            past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+            logger.warning_once(
+                "We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and "
+                "will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class "
+                "(https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)"
+            )
+
+    if cache_position is None:
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        cache_position = torch.arange(
+            past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+        )
+    if position_ids is None:
+        position_ids = cache_position.unsqueeze(0)
+
+    causal_mask = model._update_causal_mask( # TODO:
+        attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
+    )
+    hidden_states = inputs_embeds
+    original_hidden_states = (inputs_embeds, inputs_embeds) # TODO:
+
+    # create position embeddings to be shared across the decoder layers
+    position_embeddings = model.rotary_emb(hidden_states, position_ids)
+
+    # decoder layers
+    all_hidden_states = () if output_hidden_states else None
+    all_original_hidden_states = ()
+    all_self_attns = () if output_attentions else None
+    next_decoder_cache = None
+
+    for idx, decoder_layer in enumerate(model.layers[: model.config.num_hidden_layers]):
+        # TODO:
+        if hidden_states.shape[1] > 1 and insert_info is not None:
+            for batch_item_idx in range(len(insert_info)):
+                if idx in insert_info[batch_item_idx].keys():
+                    if insert_info[batch_item_idx]['replacing_mode'] == 'addition':
+                        hidden_states[batch_item_idx:batch_item_idx + 1, insert_info[batch_item_idx][idx][0], :] += \
+                            insert_info[batch_item_idx]['overlay_strength'] * insert_info[batch_item_idx][idx][1].to(
+                                hidden_states.device)
+                    elif insert_info[batch_item_idx]['replacing_mode'] == 'normalized':
+                        hidden_states[batch_item_idx:batch_item_idx + 1, insert_info[batch_item_idx][idx][0], :] = \
+                            insert_info[batch_item_idx]['overlay_strength'] * insert_info[batch_item_idx][idx][1].to(
+                                hidden_states.device) + (
+                                    1 - insert_info[batch_item_idx]['overlay_strength']) * hidden_states[
+                                                                                           batch_item_idx:batch_item_idx + 1,
+                                                                                           insert_info[batch_item_idx][
+                                                                                               idx][0], :]
+        if output_hidden_states:
+            all_hidden_states += (hidden_states,)
+            all_original_hidden_states += (original_hidden_states,) # TODO:
+
+        if model.gradient_checkpointing and model.training:
+            layer_outputs = model._gradient_checkpointing_func(
+                decoder_layer.__call__,
+                hidden_states,
+                causal_mask,
+                position_ids,
+                past_key_values,
+                output_attentions,
+                use_cache,
+                cache_position,
+                position_embeddings,
+            )
+        else:
+            layer_outputs = decoder_layer_forward_interpret(
+                hidden_states,
+                decoder_layer=decoder_layer,  # TODO:
+                attention_mask=causal_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_values,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+                **flash_attn_kwargs,
+            )
+
+        layer_outputs, original_hidden_states = layer_outputs
+        hidden_states = layer_outputs[0]
+
+        if use_cache:
+            next_decoder_cache = layer_outputs[2 if output_attentions else 1]
+
+        if output_attentions:
+            all_self_attns += (layer_outputs[1],)
+
+    hidden_states = model.norm(hidden_states)
+
+    # add hidden states from the last decoder layer
+    if output_hidden_states:
+        all_hidden_states += (hidden_states,)
+        all_original_hidden_states += (original_hidden_states,) # TODO:
+
+    next_cache = next_decoder_cache if use_cache else None
+    if return_legacy_cache:
+        next_cache = next_cache.to_legacy_cache()
+
+    if not return_dict:
+        return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
+    return BaseModelOutputWithPast(
+        last_hidden_state=hidden_states,
+        past_key_values=next_cache,
+        hidden_states=all_hidden_states,
+        attentions=all_self_attns,
+    ), all_original_hidden_states # TODO:
+
+
 @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
 def model_model_forward_interpret(
-    model = None,
-    input_ids: torch.LongTensor = None,
-    attention_mask: Optional[torch.Tensor] = None,
-    position_ids: Optional[torch.LongTensor] = None,
-    past_key_values: Optional[List[torch.FloatTensor]] = None,
-    inputs_embeds: Optional[torch.FloatTensor] = None,
-    use_cache: Optional[bool] = None,
-    output_attentions: Optional[bool] = None,
-    output_hidden_states: Optional[bool] = None,
-    return_dict: Optional[bool] = None,
-    insert_info = None,
+        model,
+        input_ids: torch.LongTensor = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        insert_info=None,
 ) -> Union[Tuple, BaseModelOutputWithPast]:
     output_attentions = output_attentions if output_attentions is not None else model.model.config.output_attentions
     output_hidden_states = (
@@ -323,7 +445,7 @@ def model_model_forward_interpret(
     )
 
     hidden_states = inputs_embeds
-    original_hidden_states = (inputs_embeds, inputs_embeds)
+    original_hidden_states = (inputs_embeds, inputs_embeds) # TODO:
 
     # print("inputs_embeds", inputs_embeds.shape)
 
@@ -336,20 +458,27 @@ def model_model_forward_interpret(
 
     # decoder layers
     all_hidden_states = () if output_hidden_states else None
-    all_original_hidden_states = ()
+    all_original_hidden_states = () # TODO:
     all_self_attns = () if output_attentions else None
     next_decoder_cache = () if use_cache else None
 
-
-    
     for idx, decoder_layer in enumerate(model.model.layers):
-        if hidden_states.shape[1] > 1 and insert_info != None:
+        # TODO:
+        if hidden_states.shape[1] > 1 and insert_info is not None:
             for batch_item_idx in range(len(insert_info)):
                 if idx in insert_info[batch_item_idx].keys():
                     if insert_info[batch_item_idx]['replacing_mode'] == 'addition':
-                        hidden_states[batch_item_idx:batch_item_idx+1, insert_info[batch_item_idx][idx][0], :] += insert_info[batch_item_idx]['overlay_strength'] * insert_info[batch_item_idx][idx][1].to(hidden_states.device)
+                        hidden_states[batch_item_idx:batch_item_idx + 1, insert_info[batch_item_idx][idx][0], :] += \
+                        insert_info[batch_item_idx]['overlay_strength'] * insert_info[batch_item_idx][idx][1].to(
+                            hidden_states.device)
                     elif insert_info[batch_item_idx]['replacing_mode'] == 'normalized':
-                        hidden_states[batch_item_idx:batch_item_idx+1, insert_info[batch_item_idx][idx][0], :] = insert_info[batch_item_idx]['overlay_strength'] * insert_info[batch_item_idx][idx][1].to(hidden_states.device) + (1-insert_info[batch_item_idx]['overlay_strength']) * hidden_states[batch_item_idx:batch_item_idx+1, insert_info[batch_item_idx][idx][0], :]
+                        hidden_states[batch_item_idx:batch_item_idx + 1, insert_info[batch_item_idx][idx][0], :] = \
+                        insert_info[batch_item_idx]['overlay_strength'] * insert_info[batch_item_idx][idx][1].to(
+                            hidden_states.device) + (
+                                    1 - insert_info[batch_item_idx]['overlay_strength']) * hidden_states[
+                                                                                           batch_item_idx:batch_item_idx + 1,
+                                                                                           insert_info[batch_item_idx][
+                                                                                               idx][0], :]
 
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
@@ -369,10 +498,9 @@ def model_model_forward_interpret(
                 create_custom_forward(decoder_layer), hidden_states, attention_mask, position_ids
             )
         else:
-            
             layer_outputs = decoder_layer_forward_interpret(
                 hidden_states,
-                decoder_layer = decoder_layer,
+                decoder_layer=decoder_layer,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 past_key_value=past_key_value,
@@ -396,7 +524,7 @@ def model_model_forward_interpret(
     # add hidden states from the last decoder layer
     if output_hidden_states:
         all_hidden_states += (hidden_states,)
-        all_original_hidden_states += (original_hidden_states,)
+        all_original_hidden_states += (original_hidden_states,) # TODO:
 
     next_cache = next_decoder_cache if use_cache else None
     if not return_dict:
@@ -406,18 +534,22 @@ def model_model_forward_interpret(
         past_key_values=next_cache,
         hidden_states=all_hidden_states,
         attentions=all_self_attns,
-    ), all_original_hidden_states
+    ), all_original_hidden_states # TODO:
 
 
+# modified for transformers==4.46.3
 def decoder_layer_forward_interpret(
-    hidden_states: torch.Tensor,
-    decoder_layer=None,
-    attention_mask: Optional[torch.Tensor] = None,
-    position_ids: Optional[torch.LongTensor] = None,
-    past_key_value: Optional[Tuple[torch.Tensor]] = None,
-    output_attentions: Optional[bool] = False,
-    use_cache: Optional[bool] = False,
-    padding_mask: Optional[torch.LongTensor] = None,
+        hidden_states: torch.Tensor,
+        decoder_layer,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
+        **kwargs,
+        # padding_mask: Optional[torch.LongTensor] = None,
 ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
     """
     Args:
@@ -439,14 +571,16 @@ def decoder_layer_forward_interpret(
 
     # Self Attention
     # print(type(hidden_states), hidden_states.shape)
-    hidden_states, self_attn_weights, present_key_value = decoder_layer.self_attn(
+    hidden_states, self_attn_weights, present_key_value = decoder_layer.self_attn( # TODO:
         hidden_states=hidden_states,
         attention_mask=attention_mask,
         position_ids=position_ids,
         past_key_value=past_key_value,
         output_attentions=output_attentions,
         use_cache=use_cache,
-        padding_mask=padding_mask,
+        cache_position=cache_position,
+        position_embeddings=position_embeddings,
+        **kwargs,
     )
 
     hidden_states = hidden_states.to(residual.device)
@@ -462,8 +596,7 @@ def decoder_layer_forward_interpret(
     hidden_states = decoder_layer.mlp(hidden_states)
 
     hidden_states = hidden_states.to(residual.device)
-    # print(hidden_states.device)
-    # print(residual.device)
+
     original_hidden_states = (pre_mlp, residual)
     hidden_states = residual + hidden_states
 

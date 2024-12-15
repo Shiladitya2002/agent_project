@@ -38,7 +38,7 @@ def interpret(original_prompt = None,
                 k = 1):
 
     print(f"Interpreting '{original_prompt}' with '{interpretation_prompt.interpretation_prompt}'")
-    interpretation_prompt_model_inputs = interpretation_prompt.interpretation_prompt_model_inputs
+    interpretation_prompt_model_inputs = interpretation_prompt.tokenized_interpretation_prompt
     insert_locations = interpretation_prompt.insert_locations
     original_prompt_inputs = tokenizer(original_prompt, return_tensors="pt").to(model.device)
     interpretation_prompt_model_inputs = interpretation_prompt_model_inputs.to(model.device)
@@ -95,7 +95,7 @@ def interpret(original_prompt = None,
     
     
 def interpret_vectors(vecs=None, model=None, interpretation_prompt=None, tokenizer=None, bs = 8, k = 2, max_new_tokens=30):
-    interpretation_prompt_model_inputs = interpretation_prompt.interpretation_prompt_model_inputs
+    interpretation_prompt_model_inputs = interpretation_prompt.tokenized_interpretation_prompt
     insert_locations = interpretation_prompt.insert_locations
     interpretation_prompt_model_inputs = interpretation_prompt_model_inputs.to(model.device)
 
