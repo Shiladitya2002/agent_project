@@ -584,9 +584,6 @@ def decoder_layer_forward_interpret(
     )
 
     hidden_states = hidden_states.to(residual.device)
-    # print(hidden_states.device)
-    # print(residual.device)
-
     hidden_states = residual + hidden_states
 
     # Fully Connected
@@ -594,9 +591,7 @@ def decoder_layer_forward_interpret(
     hidden_states = decoder_layer.post_attention_layernorm(hidden_states)
     pre_mlp = hidden_states
     hidden_states = decoder_layer.mlp(hidden_states)
-
     hidden_states = hidden_states.to(residual.device)
-
     original_hidden_states = (pre_mlp, residual)
     hidden_states = residual + hidden_states
 

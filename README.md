@@ -4,8 +4,8 @@
 
 
 
-
-
+# MODIFICATION Dec/15/2024:
+# For the code specially tailored for the newest transformers version(`transformers==4.46.3`), run `demo_for_4_46_3.ipynb` and see the folder `selfie_for_transformers_4_46_3`.
 
 This repository contains the code and data for the paper [`SelfIE`: Self-Interpretation of Large Language Model Embeddings](https://arxiv.org/abs/2403.10949) by [Haozhe Chen](https://tonychen.xyz/), [Carl Vondrick](https://www.cs.columbia.edu/~vondrick/), and [Chengzhi Mao](http://www.cs.columbia.edu/~mcz/).
 
