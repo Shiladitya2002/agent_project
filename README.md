@@ -1,7 +1,7 @@
 # Work in this Repo.
 
 # MODIFICATION Dec/16/2024 night:
-##  The original selfie was a huge chunk of garbage code. I'll rewrite the selfie part. The `selfie_for_transformers_4_46_3` should be workable, but it is not going to be used. If you'd like to try in advance how to get some feelings for selfie, go to `demo_for_4_46_3.ipynb`.
+##  The original selfie was a huge chunk of garbage code, and so is my current temporarily modified edition. I'll rewrite the selfie part. The `selfie_for_transformers_4_46_3` should be workable, but it is not going to be used. If you'd like to try in advance how to get some feelings for selfie, go to `demo_for_4_46_3.ipynb`.
 
 
 # MODIFICATION Dec/15/2024:
