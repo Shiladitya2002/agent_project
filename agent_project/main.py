@@ -11,7 +11,7 @@ def main():
     agent = WikipediaQAAgent(device=device)
 
     question = "Who is Jeffrey Dahmer and what were his crimes?"
-    final_answer = agent(question)
+    final_answer = agent._qa_pipeline(question)
 
     print("Final Answer:")
     print(final_answer)

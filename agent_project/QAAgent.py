@@ -76,7 +76,7 @@ class WikipediaQAAgent:
         return [Document(page_content=passage) for passage in passages]
 
     def _create_vector_store(self, documents):
-        print(documents)
+        #print(documents)
         return FAISS.from_documents(documents, self.embedding_model)
 
     def _qa_pipeline(self, question: str) -> str:
@@ -93,5 +93,9 @@ class WikipediaQAAgent:
         return final_answer
 
     def _batch_qa_pipeline(self, questions: list[str]) -> list[str]:
-        # TODO: complete this
-        pass
+        answers = []
+        for question in questions:
+            ans = self._qa_pipeline(question)
+            answers.append(ans)
+            print(ans)
+        return answers
