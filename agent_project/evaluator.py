@@ -1,2 +1,5 @@
 class Evaluator:
-    pass
+    # TODO: finish the evaluator
+
+    def __init__(self):
+        pass

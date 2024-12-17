@@ -52,7 +52,7 @@ class HuggingFaceEmbeddings(Embeddings):
 
 class WikipediaQAAgent:
     safety_alert_message = "Sorry, I can't help with that."
-    # TODO: might change this?
+    # TODO: might change this message to a better one?
 
     def __init__(self, device):
         self.embedding_model = HuggingFaceEmbeddings("sentence-transformers/all-MiniLM-L6-v2", device=device)
@@ -95,19 +95,3 @@ class WikipediaQAAgent:
     def _batch_qa_pipeline(self, questions: list[str]) -> list[str]:
         # TODO: complete this
         pass
-
-
-
-def main():
-    device = 0 if torch.cuda.is_available() else -1
-    agent = WikipediaQAAgent(device=device)
-
-    question = "Who is Jeffrey Dahmer and what were his crimes?"
-    final_answer = agent(question)
-
-    print("Final Answer:")
-    print(final_answer)
-
-
-if __name__ == '__main__':
-    main()
