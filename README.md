@@ -35,21 +35,27 @@ tokenizer = AutoTokenizer.from_pretrained(model_path, device_map="auto")
 model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto")
 ```
 Create interpretation prompt from a tuple. Placeholders are denoted with `0`.
+
 ```python
-from selfie.interpret import InterpretationPrompt
-interpretation_prompt = InterpretationPrompt(tokenizer, ("[INST]", 0, 0, 0, 0, 0, "[/INST] Sure, I will summarize the message:"))
+from selfie_src.selfie import InterpretationPrompt
+
+interpretation_prompt = InterpretationPrompt(tokenizer,
+                                             ("[INST]", 0, 0, 0, 0, 0, "[/INST] Sure, I will summarize the message:"))
 ```
 Specify original input prompt with `original_prompt` and layer and token idx to interpret in `tokens_to_interpret`. Get interpretation as a dictionary with `interpret`
+
 ```python
-from selfie.interpret import interpret
+from selfie_src.selfie import interpret
 
 original_prompt = "[INST] What's highest mountain in the world? [/INST]"
-tokens_to_interpret = [(10,5), (10,6)]
+tokens_to_interpret = [(10, 5), (10, 6)]
 bs = 2
 max_new_tokens = 10
 k = 1
 
-interpretation_df = interpret(original_prompt=original_prompt, tokens_to_interpret=tokens_to_interpret, model=model, interpretation_prompt=interpretation_prompt, bs=bs, max_new_tokens=max_new_tokens, k=k, tokenizer=tokenizer)
+interpretation_df = interpret(original_prompt=original_prompt, tokens_to_interpret=tokens_to_interpret, model=model,
+                              interpretation_prompt=interpretation_prompt, bs=bs, max_new_tokens=max_new_tokens, k=k,
+                              tokenizer=tokenizer)
 ```
 See full example code in `demo.ipynb`.
 

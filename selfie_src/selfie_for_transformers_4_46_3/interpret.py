@@ -1,9 +1,7 @@
-from selfie_for_transformers_4_46_3.generate_wrappers import generate_interpret, model_forward_interpret, \
+from selfie_src.selfie_for_transformers_4_46_3.generate_wrappers import model_forward_interpret, \
     my_generate_interpret
 from tqdm import tqdm
 import torch
-import pandas as pd
-import numpy as np
 
 
 class InterpretationPrompt:

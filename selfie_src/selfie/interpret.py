@@ -1,8 +1,7 @@
-from selfie.generate_wrappers import generate_interpret, model_forward_interpret
+from selfie_src.selfie.generate_wrappers import generate_interpret, model_forward_interpret
 from tqdm import tqdm
 import torch
-import pandas as pd
-import numpy as np
+
 
 class InterpretationPrompt:
     def __init__(self, tokenizer, interpretation_prompt_sequence):
